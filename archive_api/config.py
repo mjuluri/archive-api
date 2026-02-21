@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     model_config = {"env_prefix": "ARCHIVE_"}
 
     database_url: str = Field(
-        default="postgresql+asyncpg://archive:archive@localhost:5432/exoplanets",
+        default="sqlite+aiosqlite:////tmp/exoplanets.db",
     )
     debug: bool = False
     log_level: str = "INFO"

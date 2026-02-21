@@ -8,11 +8,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from sqlalchemy import text
-from a2wsgi import WSGIMiddleware
 from starlette.responses import Response
 
 from archive_api.config import settings
-from archive_api.dashboard.app import create_dash_app
 from archive_api.database import engine
 from archive_api.middleware.logging_middleware import RequestLoggingMiddleware
 from archive_api.middleware.rate_limiter import RateLimiterMiddleware
@@ -42,11 +40,28 @@ def _configure_logging() -> None:
     )
 
 
+_db_initialized = False
+
+
+async def _ensure_db() -> None:
+    """Create tables and seed on first call (idempotent)."""
+    global _db_initialized
+    if _db_initialized:
+        return
+    from archive_api.models import Base
+    from archive_api.seed import seed_database
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await seed_database()
+    _db_initialized = True
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Set up logging on startup; dispose of the engine on shutdown."""
     _configure_logging()
     logger.info("archive-api starting")
+    await _ensure_db()
     yield
     await engine.dispose()
     logger.info("archive-api shutdown complete")
@@ -75,8 +90,14 @@ def create_app() -> FastAPI:
     app.include_router(statistics.router)
     app.include_router(export.router)
 
-    dash_app = create_dash_app(requests_pathname_prefix="/dashboard/")
-    app.mount("/dashboard", WSGIMiddleware(dash_app.server))
+    try:
+        from a2wsgi import WSGIMiddleware
+        from archive_api.dashboard.app import create_dash_app
+
+        dash_app = create_dash_app(requests_pathname_prefix="/dashboard/")
+        app.mount("/dashboard", WSGIMiddleware(dash_app.server))
+    except ImportError:
+        pass
 
     # -- system endpoints --------------------------------------------------
 
@@ -102,6 +123,11 @@ def create_app() -> FastAPI:
         )
 
     # -- global middleware / handlers --------------------------------------
+
+    @app.middleware("http")
+    async def ensure_db_middleware(request: Request, call_next):
+        await _ensure_db()
+        return await call_next(request)
 
     @app.middleware("http")
     async def prometheus_middleware(request: Request, call_next):

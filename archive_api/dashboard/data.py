@@ -52,7 +52,7 @@ _RENAME = {
 def _sync_url() -> str:
     url = os.getenv(
         "ARCHIVE_DATABASE_URL",
-        "postgresql+asyncpg://archive:archive@localhost:5432/exoplanets",
+        "sqlite+aiosqlite:////tmp/exoplanets.db",
     )
     return url.replace("+asyncpg", "").replace("+aiosqlite", "")
 
